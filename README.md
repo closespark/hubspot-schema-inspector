@@ -31,6 +31,21 @@ You need a HubSpot Private App access token with the following scopes:
 
 [Create a Private App in HubSpot](https://developers.hubspot.com/docs/api/private-apps)
 
+## Environment Variables
+
+### ✅ Required: `HUBSPOT_ACCESS_TOKEN`
+
+**What it is:**
+A Private App access token from HubSpot.
+
+**Why it's required:**
+Authenticates all calls to:
+- `/crm/v3/schemas`
+- `/crm/v4/associations`
+- `/crm/v3/objects/*`
+
+Needed to inspect object types, internal names, IDs, and associations.
+
 ## Usage
 
 ### Set your access token
