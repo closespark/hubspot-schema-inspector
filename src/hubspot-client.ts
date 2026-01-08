@@ -30,15 +30,12 @@ export class HubSpotClient {
    */
   async objectExists(name: string): Promise<ObjectExistsResult> {
     try {
-      const response = await this.client.get(`/crm/v3/objects/${name}`, {
+      await this.client.get(`/crm/v3/objects/${name}`, {
         params: { limit: 1 },
       });
       
-      if (response.status === 200) {
-        return { exists: true, verifiedVia: 'objects' };
-      }
-      
-      return { exists: false, verifiedVia: 'objects' };
+      // If we reach here, the request was successful (200 OK)
+      return { exists: true, verifiedVia: 'objects' };
     } catch (error: any) {
       if (error.response) {
         if (error.response.status === 404) {

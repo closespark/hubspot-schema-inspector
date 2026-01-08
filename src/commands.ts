@@ -241,23 +241,32 @@ export async function verifyAssociationsCommand(
     
     // Step 2: Check object A existence
     // First try schema lookup (custom objects are only discoverable via schemas)
-    let schemaA = findSchemaByNameOrLabel(schemas, objectA);
-    let objectAExists = schemaA !== null;
-    let verifiedViaA: 'schemas' | 'objects' = 'schemas';
+    const schemaA = findSchemaByNameOrLabel(schemas, objectA);
+    let objectAExists: boolean;
+    let verifiedViaA: 'schemas' | 'objects';
     
-    // If not found in schemas, try probing the objects API (for standard objects)
-    if (!objectAExists) {
+    if (schemaA !== null) {
+      // Found in schemas - it's a custom object
+      objectAExists = true;
+      verifiedViaA = 'schemas';
+    } else {
+      // Not in schemas, try probing the objects API (for standard objects)
       const probeResultA = await client.objectExists(objectA);
       objectAExists = probeResultA.exists;
       verifiedViaA = 'objects';
     }
     
     // Step 3: Check object B existence
-    let schemaB = findSchemaByNameOrLabel(schemas, objectB);
-    let objectBExists = schemaB !== null;
-    let verifiedViaB: 'schemas' | 'objects' = 'schemas';
+    const schemaB = findSchemaByNameOrLabel(schemas, objectB);
+    let objectBExists: boolean;
+    let verifiedViaB: 'schemas' | 'objects';
     
-    if (!objectBExists) {
+    if (schemaB !== null) {
+      // Found in schemas - it's a custom object
+      objectBExists = true;
+      verifiedViaB = 'schemas';
+    } else {
+      // Not in schemas, try probing the objects API (for standard objects)
       const probeResultB = await client.objectExists(objectB);
       objectBExists = probeResultB.exists;
       verifiedViaB = 'objects';
