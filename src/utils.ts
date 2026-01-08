@@ -275,6 +275,8 @@ export function formatAssociationsList(
 
 /**
  * Format verify output (the power feature output)
+ * Shows object existence with verification source (schemas API vs objects API)
+ * and the recommended API path for associations.
  */
 export function formatVerifyOutput(
   data: {
@@ -284,6 +286,8 @@ export function formatVerifyOutput(
     internalNameB: string;
     objectAExists: boolean;
     objectBExists: boolean;
+    verifiedViaA: 'schemas' | 'objects';
+    verifiedViaB: 'schemas' | 'objects';
     associationExists: boolean;
     cardinality: string;
     isAPortalScoped: boolean;
@@ -299,15 +303,17 @@ export function formatVerifyOutput(
   
   lines.push('');
   
-  // Step 1: Object existence checks
+  // Step 1: Object existence checks with verification source
   if (data.objectAExists) {
-    lines.push(chalk.green(`✔ Object ${data.internalNameA} exists`));
+    const source = data.verifiedViaA === 'schemas' ? 'schemas API' : 'objects API';
+    lines.push(chalk.green(`✔ Object ${data.internalNameA} exists (verified via ${source})`));
   } else {
     lines.push(chalk.red(`✖ Object ${data.objectA} not found`));
   }
   
   if (data.objectBExists) {
-    lines.push(chalk.green(`✔ Object ${data.internalNameB} exists`));
+    const source = data.verifiedViaB === 'schemas' ? 'schemas API' : 'objects API';
+    lines.push(chalk.green(`✔ Object ${data.internalNameB} exists (verified via ${source})`));
   } else {
     lines.push(chalk.red(`✖ Object ${data.objectB} not found`));
   }
@@ -315,8 +321,8 @@ export function formatVerifyOutput(
   // Step 2: Association check
   if (data.objectAExists && data.objectBExists) {
     if (data.associationExists) {
-      const cardinalityText = data.cardinality ? ` (${data.cardinality})` : '';
-      lines.push(chalk.green(`✔ Association defined${cardinalityText}`));
+      lines.push('');
+      lines.push(chalk.green('✔ Association definition found'));
     } else {
       lines.push(chalk.red(`✖ No association defined between ${data.objectA} and ${data.objectB}`));
     }
@@ -326,15 +332,8 @@ export function formatVerifyOutput(
   
   // If association exists, show recommended API usage
   if (data.objectAExists && data.objectBExists && data.associationExists) {
-    lines.push(chalk.bold('Recommended API usage:'));
-    lines.push(chalk.green('✓ Use batch association endpoint (more reliable)'));
-    lines.push('');
+    lines.push(chalk.bold('Recommended API path:'));
     lines.push(`POST /crm/v4/associations/${data.internalNameA}/${data.internalNameB}/batch/create`);
-    lines.push('{');
-    lines.push('  "inputs": [');
-    lines.push(`    { "from": { "id": "<${data.objectA.toUpperCase()}_ID>" }, "to": { "id": "<${data.objectB.toUpperCase()}_ID>" } }`);
-    lines.push('  ]');
-    lines.push('}');
     lines.push('');
     
     // Warnings
@@ -367,6 +366,10 @@ export function formatVerifyOutput(
     }
     lines.push('');
   }
+  
+  // Always show the read-only notice
+  lines.push(chalk.cyan('ℹ No write operations were performed'));
+  lines.push('');
   
   return lines.join('\n');
 }
