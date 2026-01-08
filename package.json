@@ -1,0 +1,35 @@
+{
+  "name": "hubspot-schema-inspector",
+  "version": "1.0.0",
+  "description": "A standalone diagnostic tool for inspecting HubSpot CRM schemas, object types, and associations. Helps developers verify internal object names, understand association models, and generate correct CRM v4 API paths to debug 400/500 errors.",
+  "main": "dist/index.js",
+  "bin": {
+    "hubspot-inspector": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/cli.ts",
+    "start": "node dist/cli.js",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "hubspot",
+    "crm",
+    "schema",
+    "associations",
+    "cli",
+    "debugging"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.13.2",
+    "chalk": "^5.6.2",
+    "commander": "^14.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
