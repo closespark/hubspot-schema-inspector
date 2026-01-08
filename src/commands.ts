@@ -1,22 +1,42 @@
 import chalk from 'chalk';
 import { HubSpotClient } from './hubspot-client';
-import { formatSchema, formatSchemasTable, formatCommonErrors, isPortalScoped } from './utils';
+import { formatSchema, formatSchemasTable, formatSchemasSimple, formatObjectDetails, formatAssociationsList, formatVerifyOutput, formatCommonErrors, isPortalScoped } from './utils';
+import { HubSpotSchema } from './types';
+
+// Exit codes as per specification
+const EXIT_CODES = {
+  SUCCESS: 0,
+  ASSOCIATION_INVALID: 1,
+  OBJECT_NOT_FOUND: 2,
+  API_ERROR: 3,
+};
+
+interface CommandOptions {
+  json?: boolean;
+  quiet?: boolean;
+  verbose?: boolean;
+  filter?: string;
+  properties?: boolean;
+  verify?: boolean;
+}
 
 /**
  * List all schemas command
  */
-export async function listSchemasCommand(options: { verbose?: boolean; filter?: string }) {
+export async function listSchemasCommand(options: CommandOptions) {
   const accessToken = process.env.HUBSPOT_ACCESS_TOKEN;
   
   if (!accessToken) {
     console.error(chalk.red('Error: HUBSPOT_ACCESS_TOKEN environment variable is required'));
     console.error(chalk.gray('Set it with: export HUBSPOT_ACCESS_TOKEN=your_token_here'));
-    process.exit(1);
+    process.exit(EXIT_CODES.API_ERROR);
   }
 
   try {
     const client = new HubSpotClient(accessToken);
-    console.log(chalk.blue('Fetching schemas from HubSpot...'));
+    if (!options.quiet && !options.json) {
+      console.log(chalk.blue('Fetching schemas from HubSpot...'));
+    }
     
     const schemas = await client.getSchemas();
     
@@ -33,73 +53,99 @@ export async function listSchemasCommand(options: { verbose?: boolean; filter?: 
     }
 
     if (filteredSchemas.length === 0) {
-      console.log(chalk.yellow('No schemas found matching the filter.'));
+      if (options.json) {
+        console.log(JSON.stringify({ results: [], total: 0 }));
+      } else {
+        console.log(chalk.yellow('No schemas found matching the filter.'));
+      }
       return;
     }
 
-    if (options.verbose) {
-      // Verbose mode: show detailed information for each schema
-      filteredSchemas.forEach((schema) => {
-        console.log(formatSchema(schema, true));
-      });
+    if (options.json) {
+      // JSON output
+      const output = filteredSchemas.map((s) => ({
+        name: s.name,
+        objectTypeId: s.objectTypeId || s.id,
+        label: s.labels.singular,
+        isPortalScoped: isPortalScoped(s),
+      }));
+      console.log(JSON.stringify({ results: output, total: output.length }));
     } else {
-      // Table mode: show summary table
-      console.log(formatSchemasTable(filteredSchemas));
+      // Standard output matching spec format
+      console.log(formatSchemasSimple(filteredSchemas, options.quiet));
     }
   } catch (error: any) {
-    console.error(chalk.red('Error:'), error.message);
-    process.exit(1);
+    if (options.json) {
+      console.log(JSON.stringify({ error: error.message }));
+    } else {
+      console.error(chalk.red('Error:'), error.message);
+    }
+    process.exit(EXIT_CODES.API_ERROR);
   }
 }
 
 /**
  * Inspect a specific object type command
  */
-export async function inspectObjectCommand(objectType: string, options: { properties?: boolean }) {
+export async function inspectObjectCommand(objectType: string, options: CommandOptions) {
   const accessToken = process.env.HUBSPOT_ACCESS_TOKEN;
   
   if (!accessToken) {
     console.error(chalk.red('Error: HUBSPOT_ACCESS_TOKEN environment variable is required'));
     console.error(chalk.gray('Set it with: export HUBSPOT_ACCESS_TOKEN=your_token_here'));
-    process.exit(1);
+    process.exit(EXIT_CODES.API_ERROR);
   }
 
   try {
     const client = new HubSpotClient(accessToken);
-    console.log(chalk.blue(`Fetching schema for "${objectType}"...`));
+    if (!options.quiet && !options.json) {
+      console.log(chalk.blue(`Fetching schema for "${objectType}"...`));
+    }
     
     const schema = await client.getSchema(objectType);
     
-    // Show detailed schema information
-    console.log(formatSchema(schema, true));
-    
-    // Show properties if requested
-    if (options.properties && schema.properties) {
-      console.log(chalk.bold('\nProperties:'));
-      console.log(chalk.gray('-'.repeat(80)));
+    if (options.json) {
+      // JSON output
+      const output = {
+        name: schema.name,
+        label: schema.labels.singular,
+        objectTypeId: schema.objectTypeId || schema.id,
+        isPortalScoped: isPortalScoped(schema),
+        associations: schema.associations || [],
+        ...(options.properties && schema.properties ? { properties: schema.properties } : {}),
+      };
+      console.log(JSON.stringify(output));
+    } else {
+      // Standard output matching spec format
+      console.log(formatObjectDetails(schema, options.quiet, options.verbose));
       
-      const sorted = [...schema.properties].sort((a, b) => a.name.localeCompare(b.name));
-      
-      sorted.forEach((prop) => {
-        const hubspotDefined = prop.hubspotDefined ? chalk.blue('[HS]') : chalk.yellow('[CUSTOM]');
-        console.log(`  ${hubspotDefined} ${chalk.white(prop.name)}`);
-        console.log(chalk.gray(`      Label: ${prop.label}`));
-        console.log(chalk.gray(`      Type: ${prop.type} (${prop.fieldType})`));
-        if (prop.description) {
-          console.log(chalk.gray(`      Description: ${prop.description}`));
-        }
-        console.log('');
-      });
+      // Show properties if requested
+      if (options.properties && schema.properties) {
+        console.log(chalk.bold('\nProperties:'));
+        console.log(chalk.gray('-'.repeat(80)));
+        
+        const sorted = [...schema.properties].sort((a, b) => a.name.localeCompare(b.name));
+        
+        sorted.forEach((prop) => {
+          const hubspotDefined = prop.hubspotDefined ? chalk.blue('[HS]') : chalk.yellow('[CUSTOM]');
+          console.log(`  ${hubspotDefined} ${chalk.white(prop.name)}`);
+          console.log(chalk.gray(`      Label: ${prop.label}`));
+          console.log(chalk.gray(`      Type: ${prop.type} (${prop.fieldType})`));
+          if (prop.description) {
+            console.log(chalk.gray(`      Description: ${prop.description}`));
+          }
+          console.log('');
+        });
+      }
     }
-    
-    // CRM v4 API path
-    console.log(chalk.bold('\nCRM v4 API Paths:'));
-    console.log(chalk.gray(`  Objects: ${chalk.white(`/crm/v3/objects/${schema.name}`)}`));
-    console.log(chalk.gray(`  Associations: ${chalk.white(`/crm/v4/associations/${schema.name}/{toObjectType}/batch/create`)}`));
-    console.log('');
   } catch (error: any) {
-    console.error(chalk.red('Error:'), error.message);
-    process.exit(1);
+    const isNotFound = error.message.includes('404');
+    if (options.json) {
+      console.log(JSON.stringify({ error: error.message }));
+    } else {
+      console.error(chalk.red('Error:'), error.message);
+    }
+    process.exit(isNotFound ? EXIT_CODES.OBJECT_NOT_FOUND : EXIT_CODES.API_ERROR);
   }
 }
 
@@ -107,82 +153,209 @@ export async function inspectObjectCommand(objectType: string, options: { proper
  * Inspect associations between two object types
  */
 export async function inspectAssociationsCommand(
-  fromObject: string,
-  toObject: string,
-  options: { verify?: boolean }
+  objectA: string,
+  objectB: string,
+  options: CommandOptions
 ) {
   const accessToken = process.env.HUBSPOT_ACCESS_TOKEN;
   
   if (!accessToken) {
     console.error(chalk.red('Error: HUBSPOT_ACCESS_TOKEN environment variable is required'));
     console.error(chalk.gray('Set it with: export HUBSPOT_ACCESS_TOKEN=your_token_here'));
-    process.exit(1);
+    process.exit(EXIT_CODES.API_ERROR);
+  }
+
+  // If --verify flag is set, delegate to verifyAssociationsCommand
+  if (options.verify) {
+    return verifyAssociationsCommand(objectA, objectB, options);
   }
 
   try {
     const client = new HubSpotClient(accessToken);
     
-    // Verify the association path
-    console.log(chalk.blue(`Checking associations from "${fromObject}" to "${toObject}"...`));
-    
-    const result = await client.verifyAssociationPath(fromObject, toObject);
-    
-    console.log(chalk.bold('\nAssociation Path:'));
-    console.log(chalk.gray(`  ${result.path}`));
-    console.log('');
-    
-    if (result.valid) {
-      console.log(chalk.green('✓ Valid association path'));
-      console.log('');
-      
-      if (result.associationTypes && result.associationTypes.results) {
-        if (result.associationTypes.results.length > 0) {
-          console.log(chalk.bold('Available Association Types:'));
-          console.log(chalk.gray('-'.repeat(80)));
-          
-          result.associationTypes.results.forEach((assoc) => {
-            console.log(chalk.white(`  ${assoc.name || 'Unnamed'}`));
-            console.log(chalk.gray(`    Association Type ID: ${assoc.associationTypeId}`));
-            console.log(chalk.gray(`    Category: ${assoc.associationCategory}`));
-            console.log('');
-          });
-          
-          console.log(chalk.bold('Usage Example:'));
-          console.log(chalk.gray('  POST ' + chalk.white(`/crm/v4/associations/${fromObject}/${toObject}/batch/create`)));
-          console.log(chalk.gray('  Body: {'));
-          console.log(chalk.gray('    "inputs": [{'));
-          console.log(chalk.gray(`      "from": { "id": "123" },`));
-          console.log(chalk.gray(`      "to": { "id": "456" },`));
-          console.log(chalk.gray(`      "types": [{ "associationTypeId": ${result.associationTypes.results[0].associationTypeId}, "associationCategory": "${result.associationTypes.results[0].associationCategory}" }]`));
-          console.log(chalk.gray('    }]'));
-          console.log(chalk.gray('  }'));
-          console.log('');
-        } else {
-          console.log(chalk.yellow('No association types defined between these objects.'));
-          console.log(chalk.gray('You may need to create a custom association definition first.'));
-          console.log('');
-        }
-      }
-    } else {
-      console.log(chalk.red('✗ Invalid association path'));
-      console.log(chalk.yellow(`  ${result.error}`));
-      console.log('');
-      
-      console.log(chalk.bold('Troubleshooting:'));
-      console.log(chalk.gray('  1. Verify object type names with: hubspot-inspector schemas'));
-      console.log(chalk.gray('  2. Check if both objects exist in your portal'));
-      console.log(chalk.gray('  3. Ensure association definition exists between these object types'));
-      console.log('');
+    if (!options.quiet && !options.json) {
+      console.log(chalk.blue(`Checking associations from "${objectA}" to "${objectB}"...`));
     }
     
-    // Show common errors if requested
-    if (options.verify) {
-      console.log(formatCommonErrors());
+    const result = await client.verifyAssociationPath(objectA, objectB);
+    
+    if (options.json) {
+      console.log(JSON.stringify({
+        objectA,
+        objectB,
+        valid: result.valid,
+        path: result.path,
+        associationTypes: result.associationTypes?.results || [],
+        error: result.error,
+      }));
+      if (!result.valid) {
+        process.exit(EXIT_CODES.ASSOCIATION_INVALID);
+      }
+      return;
+    }
+    
+    console.log(formatAssociationsList(objectA, objectB, result, options.quiet, options.verbose));
+    
+    if (!result.valid) {
+      process.exit(EXIT_CODES.ASSOCIATION_INVALID);
     }
   } catch (error: any) {
-    console.error(chalk.red('Error:'), error.message);
-    process.exit(1);
+    if (options.json) {
+      console.log(JSON.stringify({ error: error.message }));
+    } else {
+      console.error(chalk.red('Error:'), error.message);
+    }
+    process.exit(EXIT_CODES.API_ERROR);
   }
+}
+
+/**
+ * Verify associations between two objects - the power feature
+ * Answers: "Can I safely associate these two objects via the CRM v4 API, and how?"
+ */
+export async function verifyAssociationsCommand(
+  objectA: string,
+  objectB: string,
+  options: CommandOptions
+) {
+  const accessToken = process.env.HUBSPOT_ACCESS_TOKEN;
+  
+  if (!accessToken) {
+    console.error(chalk.red('Error: HUBSPOT_ACCESS_TOKEN environment variable is required'));
+    console.error(chalk.gray('Set it with: export HUBSPOT_ACCESS_TOKEN=your_token_here'));
+    process.exit(EXIT_CODES.API_ERROR);
+  }
+
+  try {
+    const client = new HubSpotClient(accessToken);
+    const schemas = await client.getSchemas();
+    
+    // Step 1: Confirm both objects exist
+    const schemaA = findSchemaByNameOrLabel(schemas, objectA);
+    const schemaB = findSchemaByNameOrLabel(schemas, objectB);
+    
+    const objectAExists = schemaA !== null;
+    const objectBExists = schemaB !== null;
+    
+    // Get the actual internal names
+    const internalNameA = schemaA?.name || objectA;
+    const internalNameB = schemaB?.name || objectB;
+    
+    // Step 2: Check association definition
+    let associationResult = null;
+    let associationExists = false;
+    let cardinality = '';
+    
+    if (objectAExists && objectBExists) {
+      associationResult = await client.verifyAssociationPath(internalNameA, internalNameB);
+      associationExists = associationResult.valid && 
+        (associationResult.associationTypes?.results?.length ?? 0) > 0;
+      
+      if (associationExists && associationResult.associationTypes?.results) {
+        // Try to determine cardinality from association types
+        const firstAssoc = associationResult.associationTypes.results[0];
+        if (firstAssoc.name) {
+          cardinality = firstAssoc.name;
+        }
+      }
+    }
+    
+    // Detect portal-scoped names
+    const isAPortalScoped = schemaA ? isPortalScoped(schemaA) : false;
+    const isBPortalScoped = schemaB ? isPortalScoped(schemaB) : false;
+    const labelDiffersA = schemaA && objectA !== schemaA.name && objectA === schemaA.labels.singular.toLowerCase();
+    const labelDiffersB = schemaB && objectB !== schemaB.name && objectB === schemaB.labels.singular.toLowerCase();
+    
+    if (options.json) {
+      const output = {
+        objectA: {
+          input: objectA,
+          internalName: internalNameA,
+          exists: objectAExists,
+          isPortalScoped: isAPortalScoped,
+        },
+        objectB: {
+          input: objectB,
+          internalName: internalNameB,
+          exists: objectBExists,
+          isPortalScoped: isBPortalScoped,
+        },
+        association: {
+          defined: associationExists,
+          cardinality: cardinality || null,
+          types: associationResult?.associationTypes?.results || [],
+        },
+        recommendedApiPath: associationExists 
+          ? `/crm/v4/associations/${internalNameA}/${internalNameB}/batch/create`
+          : null,
+        valid: objectAExists && objectBExists && associationExists,
+      };
+      console.log(JSON.stringify(output));
+      
+      if (!objectAExists || !objectBExists) {
+        process.exit(EXIT_CODES.OBJECT_NOT_FOUND);
+      }
+      if (!associationExists) {
+        process.exit(EXIT_CODES.ASSOCIATION_INVALID);
+      }
+      return;
+    }
+    
+    // Standard output
+    console.log(formatVerifyOutput({
+      objectA,
+      objectB,
+      internalNameA,
+      internalNameB,
+      objectAExists,
+      objectBExists,
+      associationExists,
+      cardinality,
+      isAPortalScoped,
+      isBPortalScoped,
+      labelDiffersA: labelDiffersA || false,
+      labelDiffersB: labelDiffersB || false,
+      associationTypes: associationResult?.associationTypes?.results || [],
+    }, options.quiet, options.verbose));
+    
+    if (!objectAExists || !objectBExists) {
+      process.exit(EXIT_CODES.OBJECT_NOT_FOUND);
+    }
+    if (!associationExists) {
+      process.exit(EXIT_CODES.ASSOCIATION_INVALID);
+    }
+  } catch (error: any) {
+    if (options.json) {
+      console.log(JSON.stringify({ error: error.message }));
+    } else {
+      console.error(chalk.red('Error:'), error.message);
+    }
+    process.exit(EXIT_CODES.API_ERROR);
+  }
+}
+
+/**
+ * Find a schema by name or label (case-insensitive)
+ */
+function findSchemaByNameOrLabel(schemas: HubSpotSchema[], nameOrLabel: string): HubSpotSchema | null {
+  const lower = nameOrLabel.toLowerCase();
+  
+  // First try exact name match
+  let schema = schemas.find((s) => s.name.toLowerCase() === lower);
+  if (schema) return schema;
+  
+  // Then try label match
+  schema = schemas.find(
+    (s) => 
+      s.labels.singular.toLowerCase() === lower ||
+      s.labels.plural.toLowerCase() === lower
+  );
+  if (schema) return schema;
+  
+  // Finally try partial name match
+  schema = schemas.find((s) => s.name.toLowerCase().includes(lower));
+  
+  return schema || null;
 }
 
 /**
@@ -195,35 +368,54 @@ export async function showErrorsCommand() {
 /**
  * Show portal-scoped (custom) objects
  */
-export async function listCustomObjectsCommand() {
+export async function listCustomObjectsCommand(options: CommandOptions = {}) {
   const accessToken = process.env.HUBSPOT_ACCESS_TOKEN;
   
   if (!accessToken) {
     console.error(chalk.red('Error: HUBSPOT_ACCESS_TOKEN environment variable is required'));
     console.error(chalk.gray('Set it with: export HUBSPOT_ACCESS_TOKEN=your_token_here'));
-    process.exit(1);
+    process.exit(EXIT_CODES.API_ERROR);
   }
 
   try {
     const client = new HubSpotClient(accessToken);
-    console.log(chalk.blue('Fetching custom objects from HubSpot...'));
+    if (!options.quiet && !options.json) {
+      console.log(chalk.blue('Fetching custom objects from HubSpot...'));
+    }
     
     const schemas = await client.getSchemas();
     const customObjects = schemas.filter(isPortalScoped);
     
     if (customObjects.length === 0) {
-      console.log(chalk.yellow('No custom objects found in this portal.'));
+      if (options.json) {
+        console.log(JSON.stringify({ results: [], total: 0 }));
+      } else {
+        console.log(chalk.yellow('No custom objects found in this portal.'));
+      }
       return;
     }
     
-    console.log(chalk.bold(`\n${customObjects.length} Custom Objects Found:`));
-    console.log(chalk.gray('='.repeat(80)));
-    
-    customObjects.forEach((schema) => {
-      console.log(formatSchema(schema, true));
-    });
+    if (options.json) {
+      const output = customObjects.map((s) => ({
+        name: s.name,
+        objectTypeId: s.objectTypeId || s.id,
+        label: s.labels.singular,
+      }));
+      console.log(JSON.stringify({ results: output, total: output.length }));
+    } else {
+      console.log(chalk.bold(`\n${customObjects.length} Custom Objects Found:`));
+      console.log(chalk.gray('='.repeat(80)));
+      
+      customObjects.forEach((schema) => {
+        console.log(formatSchema(schema, true));
+      });
+    }
   } catch (error: any) {
-    console.error(chalk.red('Error:'), error.message);
-    process.exit(1);
+    if (options.json) {
+      console.log(JSON.stringify({ error: error.message }));
+    } else {
+      console.error(chalk.red('Error:'), error.message);
+    }
+    process.exit(EXIT_CODES.API_ERROR);
   }
 }
