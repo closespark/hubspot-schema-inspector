@@ -54,153 +54,215 @@ Needed to inspect object types, internal names, IDs, and associations.
 export HUBSPOT_ACCESS_TOKEN=your_access_token_here
 ```
 
+### CLI Name & Entrypoint
+
+The binary name is:
+
+```
+hubspot-crm
+```
+
+### Core Command Structure
+
+```
+hubspot-crm <command> [options]
+```
+
 ### Commands
 
-#### List all schemas
-
-List all CRM object types in your portal:
+#### 🔍 schemas — Inspect all objects
 
 ```bash
-hubspot-inspector schemas
+hubspot-crm schemas
 ```
 
-Show detailed information:
+**Purpose:** Fetch `/crm/v3/schemas`, print all CRM objects, and reveal real internal names.
 
-```bash
-hubspot-inspector schemas --verbose
-```
-
-Filter by name or label:
-
-```bash
-hubspot-inspector schemas --filter contact
-hubspot-inspector schemas --filter custom
-```
+**Options:**
+- `--json` - Machine-readable output
+- `--quiet` - Suppress headers
+- `--verbose` - Show raw API paths
+- `-f, --filter <pattern>` - Filter schemas by name or label
 
 **Example Output:**
 ```
-====================================================================================================
-HubSpot CRM Object Types
-====================================================================================================
-TYPE       INTERNAL NAME             ID              LABEL
-----------------------------------------------------------------------------------------------------
-STANDARD   calls                     0-48            Call
-STANDARD   companies                 0-2             Company
-STANDARD   contacts                  0-1             Contact
-STANDARD   deals                     0-3             Deal
-STANDARD   emails                    0-49            Email
-CUSTOM     p12345_cars               2-12345678      Car
-CUSTOM     p12345_dealerships        2-12345679      Dealership
-----------------------------------------------------------------------------------------------------
-Total: 7 object types (5 standard, 2 custom)
+Found 18 CRM objects
+
+contacts               (0-1)
+companies              (0-2)
+deals                  (0-3)
+p45060878_listings     (2-123456)  ← portal-scoped
+tickets                (0-5)
 ```
 
-#### Inspect a specific object
-
-Get detailed information about a specific object type:
+#### 🔎 object — Inspect a single object deeply
 
 ```bash
-hubspot-inspector object contacts
-hubspot-inspector object companies
-hubspot-inspector object p12345_cars
+hubspot-crm object <objectName>
 ```
 
-Include all properties:
-
+**Examples:**
 ```bash
-hubspot-inspector object contacts --properties
+hubspot-crm object listings
+hubspot-crm object p45060878_listings
+hubspot-crm object contacts
 ```
+
+**Purpose:** Show schema details, labels, object type ID, whether it's portal-scoped, and associations defined on it.
+
+**Options:**
+- `--json` - Machine-readable output
+- `--quiet` - Suppress headers
+- `--verbose` - Show raw API paths
+- `-p, --properties` - Show all properties for the object
 
 **Example Output:**
 ```
-[STANDARD] Contact (Contacts)
-  Internal Name: contacts
-  Object Type ID: 0-1
-  Meta Type: STANDARD
-  Primary Display: firstname
-  Required Properties: email
-  Created: 1/1/2020, 12:00:00 PM
+Object: Listings
+Internal name: p45060878_listings
+ObjectTypeId: 2-123456
+Scope: portal-scoped
 
-CRM v4 API Paths:
-  Objects: /crm/v3/objects/contacts
-  Associations: /crm/v4/associations/contacts/{toObjectType}/batch/create
+Associations:
+- contacts (1-to-many)
+- companies (many-to-many)
 ```
 
-#### Inspect associations between objects
-
-Verify association paths and get association type IDs:
+#### 🔗 associations — List associations between two objects
 
 ```bash
-hubspot-inspector associations contacts companies
-hubspot-inspector associations contacts deals
-hubspot-inspector associations p12345_cars p12345_dealerships
+hubspot-crm associations <objectA> <objectB>
 ```
 
-Show common error documentation:
-
+**Examples:**
 ```bash
-hubspot-inspector associations contacts companies --verify
+hubspot-crm associations contacts listings
+hubspot-crm associations deals companies
 ```
+
+**Purpose:** Call `/crm/v4/associations/{A}/{B}/types`, list valid association definitions, and show cardinality + IDs.
+
+**Options:**
+- `--verify` - Verify if you can safely associate these two objects via the CRM v4 API
+- `--json` - Machine-readable output
+- `--quiet` - Suppress headers
+- `--verbose` - Show raw API paths
 
 **Example Output:**
 ```
-Association Path:
-  /crm/v4/associations/contacts/companies/labels
+Associations between contacts ↔ listings:
 
-✓ Valid association path
-
-Available Association Types:
---------------------------------------------------------------------------------
-  Primary
-    Association Type ID: 1
-    Category: HUBSPOT_DEFINED
-
-  Unlabeled
-    Association Type ID: 279
-    Category: HUBSPOT_DEFINED
-
-Usage Example:
-  POST /crm/v4/associations/contacts/companies/batch/create
-  Body: {
-    "inputs": [{
-      "from": { "id": "123" },
-      "to": { "id": "456" },
-      "types": [{ "associationTypeId": 1, "associationCategory": "HUBSPOT_DEFINED" }]
-    }]
-  }
+- ID: 512
+  Category: HUBSPOT_DEFINED
+  Label: (default)
 ```
 
-#### List custom objects
+#### ⭐ verify — The power feature
+
+```bash
+hubspot-crm verify <objectA> <objectB>
+```
+
+Or use with associations:
+```bash
+hubspot-crm associations <objectA> <objectB> --verify
+```
+
+**What --verify does:**
+
+It answers one question: "Can I safely associate these two objects via the CRM v4 API, and how?"
+
+**Verification steps:**
+1. Confirm both objects exist
+2. Confirm association definition exists
+3. Detect portal-scoped names
+4. Determine safe API strategy
+5. Warn about known failure cases
+6. Output exact API paths
+
+**Example: Contacts ↔ Listings**
+```bash
+hubspot-crm verify contacts listings
+```
+
+**Output:**
+```
+✔ Object contacts exists
+✔ Object p45060878_listings exists
+✔ Association defined (1-to-many)
+
+Recommended API usage:
+✓ Use batch association endpoint (more reliable)
+
+POST /crm/v4/associations/contacts/p45060878_listings/batch/create
+{
+  "inputs": [
+    { "from": { "id": "<CONTACT_ID>" }, "to": { "id": "<LISTING_ID>" } }
+  ]
+}
+
+Warnings:
+⚠ UI label "Listings" differs from API object name
+⚠ Single PUT association endpoint may return 500 in sandbox
+```
+
+**Example: Invalid pair**
+```bash
+hubspot-crm verify tickets listings
+```
+
+**Output:**
+```
+✖ No association defined between tickets and listings
+
+Result:
+Association is NOT supported via API
+```
+
+Exit code: 1
+
+#### custom — List custom objects
 
 Show only portal-scoped (custom) objects:
 
 ```bash
-hubspot-inspector custom
+hubspot-crm custom
 ```
 
-#### Show common errors
+**Options:**
+- `--json` - Machine-readable output
+- `--quiet` - Suppress headers
+- `--verbose` - Show raw API paths
+
+#### errors — Show common errors
 
 Display documentation for common HubSpot API errors:
 
 ```bash
-hubspot-inspector errors
+hubspot-crm errors
 ```
 
-**Example Output:**
+### Optional Flags
+
+| Flag | Purpose |
+|------|---------|
+| `--json` | Machine-readable output |
+| `--quiet` | Suppress headers |
+| `--verbose` | Show raw API paths |
+
+**Example:**
+```bash
+hubspot-crm verify contacts listings --json
 ```
-====================================================================================================
-Common HubSpot Association API Errors
-====================================================================================================
 
-HTTP 400 - Bad Request
+### Exit Codes
 
-  1. Cause: Invalid object type name
-     Solution: Use the internal object name (e.g., "contacts" not "contact"). Run `hubspot-inspector schemas` to see all valid names.
-
-  2. Cause: Incorrect association type ID
-     Solution: Use `hubspot-inspector associations <fromObject> <toObject>` to get valid association type IDs.
-...
-```
+| Code | Meaning |
+|------|---------|
+| 0 | Verification passed |
+| 1 | Association invalid |
+| 2 | Object not found |
+| 3 | HubSpot API error |
 
 ## Common Use Cases
 
@@ -210,12 +272,12 @@ If you're getting 400 errors when creating associations:
 
 1. Verify object type names are correct:
    ```bash
-   hubspot-inspector schemas
+   hubspot-crm schemas
    ```
 
 2. Check the association path:
    ```bash
-   hubspot-inspector associations contacts companies
+   hubspot-crm associations contacts companies
    ```
 
 3. Get the correct association type ID from the output
@@ -226,17 +288,17 @@ Custom objects have special naming conventions in HubSpot:
 
 1. List all custom objects:
    ```bash
-   hubspot-inspector custom
+   hubspot-crm custom
    ```
 
 2. Inspect a custom object to get its exact internal name:
    ```bash
-   hubspot-inspector object p12345_cars
+   hubspot-crm object p12345_cars
    ```
 
 3. Verify associations between custom objects:
    ```bash
-   hubspot-inspector associations p12345_cars p12345_dealerships
+   hubspot-crm associations p12345_cars p12345_dealerships
    ```
 
 ### Verifying API Paths
@@ -244,7 +306,7 @@ Custom objects have special naming conventions in HubSpot:
 Before making CRM v4 API calls, verify the paths:
 
 ```bash
-hubspot-inspector associations contacts deals
+hubspot-crm verify contacts deals
 ```
 
 This shows you the exact path and request body format to use.
@@ -255,33 +317,18 @@ This tool uses the following HubSpot APIs:
 - [CRM Schemas API (v3)](https://developers.hubspot.com/docs/api/crm/crm-custom-objects)
 - [CRM Associations API (v4)](https://developers.hubspot.com/docs/api/crm/associations)
 
-## Common Errors and Solutions
+Internally you'll only need:
+- `/crm/v3/schemas`
+- `/crm/v4/associations/{A}/{B}/types`
 
-### HTTP 400 - Bad Request
+## The Mental Model
 
-**Invalid object type name**
-- **Cause**: Using incorrect object type name (e.g., "contact" instead of "contacts")
-- **Solution**: Use `hubspot-inspector schemas` to get the correct internal name
+- **schemas** → What objects exist
+- **object** → What is this object really
+- **associations** → What relationships exist
+- **verify** → Can I safely use the API, and how
 
-**Incorrect association type ID**
-- **Cause**: Using wrong association type ID or category
-- **Solution**: Use `hubspot-inspector associations <from> <to>` to get valid IDs
-
-### HTTP 404 - Not Found
-
-**No association definition**
-- **Cause**: No association exists between the two object types
-- **Solution**: Create a custom association definition in HubSpot settings first
-
-### HTTP 500 - Internal Server Error
-
-**Portal-scoped object name mismatch**
-- **Cause**: Custom object internal name doesn't match (missing portal prefix)
-- **Solution**: Use `hubspot-inspector custom` to get the exact internal name with portal prefix
-
-**Association type ID collision**
-- **Cause**: Using association type ID for wrong direction
-- **Solution**: Verify you're using the ID for the correct direction (from -> to)
+This turns tribal HubSpot knowledge into deterministic answers.
 
 ## Development
 

@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { HubSpotSchema } from './types';
+import { HubSpotSchema, AssociationDefinition } from './types';
 
 /**
  * Determine if a schema represents a portal-scoped (custom) object
@@ -94,6 +94,45 @@ export function formatSchema(schema: HubSpotSchema, verbose: boolean = false): s
 }
 
 /**
+ * Format schemas as a simple list (matching spec output format)
+ */
+export function formatSchemasSimple(schemas: HubSpotSchema[], quiet: boolean = false): string {
+  const lines: string[] = [];
+  
+  // Sort: standard objects first, then custom objects
+  const sorted = [...schemas].sort((a, b) => {
+    const aCustom = isPortalScoped(a);
+    const bCustom = isPortalScoped(b);
+    
+    if (aCustom !== bCustom) {
+      return aCustom ? 1 : -1;
+    }
+    
+    return a.name.localeCompare(b.name);
+  });
+  
+  if (!quiet) {
+    lines.push('');
+    lines.push(`Found ${chalk.bold(schemas.length.toString())} CRM objects`);
+    lines.push('');
+  }
+  
+  // Output each object in the simple format: name (objectTypeId)
+  for (const schema of sorted) {
+    const objectTypeId = schema.objectTypeId || schema.id;
+    const portalScoped = isPortalScoped(schema);
+    const suffix = portalScoped ? chalk.yellow(' ← portal-scoped') : '';
+    
+    const namePadded = schema.name.padEnd(25);
+    lines.push(`${namePadded} (${objectTypeId})${suffix}`);
+  }
+  
+  lines.push('');
+  
+  return lines.join('\n');
+}
+
+/**
  * Format schemas as a table
  */
 export function formatSchemasTable(schemas: HubSpotSchema[]): string {
@@ -141,17 +180,209 @@ export function formatSchemasTable(schemas: HubSpotSchema[]): string {
 }
 
 /**
+ * Format object details (matching spec output format)
+ */
+export function formatObjectDetails(schema: HubSpotSchema, quiet: boolean = false, verbose: boolean = false): string {
+  const lines: string[] = [];
+  const portalScoped = isPortalScoped(schema);
+  const scope = portalScoped ? 'portal-scoped' : 'standard';
+  
+  lines.push('');
+  lines.push(`Object: ${chalk.bold(schema.labels.singular)}`);
+  lines.push(`Internal name: ${chalk.white(schema.name)}`);
+  lines.push(`ObjectTypeId: ${chalk.white(schema.objectTypeId || schema.id)}`);
+  lines.push(`Scope: ${portalScoped ? chalk.yellow(scope) : chalk.blue(scope)}`);
+  
+  // Show associations if available
+  if (schema.associations && schema.associations.length > 0) {
+    lines.push('');
+    lines.push(chalk.bold('Associations:'));
+    schema.associations.forEach((assoc) => {
+      lines.push(`- ${assoc.name || assoc.toObjectTypeId}`);
+    });
+  }
+  
+  if (verbose) {
+    lines.push('');
+    lines.push(chalk.bold('API Paths:'));
+    lines.push(`  Objects: /crm/v3/objects/${schema.name}`);
+    lines.push(`  Associations: /crm/v4/associations/${schema.name}/{toObjectType}/batch/create`);
+  }
+  
+  lines.push('');
+  
+  return lines.join('\n');
+}
+
+/**
+ * Format associations list (matching spec output format)
+ */
+export function formatAssociationsList(
+  objectA: string,
+  objectB: string,
+  result: {
+    valid: boolean;
+    path: string;
+    associationTypes?: { results: AssociationDefinition[] };
+    error?: string;
+  },
+  quiet: boolean = false,
+  verbose: boolean = false
+): string {
+  const lines: string[] = [];
+  
+  lines.push('');
+  lines.push(`Associations between ${chalk.bold(objectA)} ↔ ${chalk.bold(objectB)}:`);
+  lines.push('');
+  
+  if (!result.valid) {
+    lines.push(chalk.red('✖ No association defined between these objects'));
+    lines.push('');
+    if (!quiet) {
+      lines.push(chalk.bold('Troubleshooting:'));
+      lines.push(chalk.gray('  1. Verify object type names with: hubspot-crm schemas'));
+      lines.push(chalk.gray('  2. Check if both objects exist in your portal'));
+      lines.push(chalk.gray('  3. Ensure association definition exists between these object types'));
+      lines.push('');
+    }
+    return lines.join('\n');
+  }
+  
+  if (result.associationTypes?.results && result.associationTypes.results.length > 0) {
+    result.associationTypes.results.forEach((assoc) => {
+      lines.push(`- ID: ${chalk.white(assoc.associationTypeId.toString())}`);
+      lines.push(`  Category: ${chalk.white(assoc.associationCategory)}`);
+      if (assoc.name) {
+        lines.push(`  Label: ${chalk.white(assoc.name)}`);
+      } else {
+        lines.push(`  Label: ${chalk.gray('(default)')}`);
+      }
+      lines.push('');
+    });
+  } else {
+    lines.push(chalk.yellow('No association types defined.'));
+    lines.push('');
+  }
+  
+  if (verbose) {
+    lines.push(chalk.bold('API Path:'));
+    lines.push(`  ${result.path}`);
+    lines.push('');
+  }
+  
+  return lines.join('\n');
+}
+
+/**
+ * Format verify output (the power feature output)
+ */
+export function formatVerifyOutput(
+  data: {
+    objectA: string;
+    objectB: string;
+    internalNameA: string;
+    internalNameB: string;
+    objectAExists: boolean;
+    objectBExists: boolean;
+    associationExists: boolean;
+    cardinality: string;
+    isAPortalScoped: boolean;
+    isBPortalScoped: boolean;
+    labelDiffersA: boolean;
+    labelDiffersB: boolean;
+    associationTypes: AssociationDefinition[];
+  },
+  quiet: boolean = false,
+  verbose: boolean = false
+): string {
+  const lines: string[] = [];
+  
+  lines.push('');
+  
+  // Step 1: Object existence checks
+  if (data.objectAExists) {
+    lines.push(chalk.green(`✔ Object ${data.internalNameA} exists`));
+  } else {
+    lines.push(chalk.red(`✖ Object ${data.objectA} not found`));
+  }
+  
+  if (data.objectBExists) {
+    lines.push(chalk.green(`✔ Object ${data.internalNameB} exists`));
+  } else {
+    lines.push(chalk.red(`✖ Object ${data.objectB} not found`));
+  }
+  
+  // Step 2: Association check
+  if (data.objectAExists && data.objectBExists) {
+    if (data.associationExists) {
+      const cardinalityText = data.cardinality ? ` (${data.cardinality})` : '';
+      lines.push(chalk.green(`✔ Association defined${cardinalityText}`));
+    } else {
+      lines.push(chalk.red(`✖ No association defined between ${data.objectA} and ${data.objectB}`));
+    }
+  }
+  
+  lines.push('');
+  
+  // If association exists, show recommended API usage
+  if (data.objectAExists && data.objectBExists && data.associationExists) {
+    lines.push(chalk.bold('Recommended API usage:'));
+    lines.push(chalk.green('✓ Use batch association endpoint (more reliable)'));
+    lines.push('');
+    lines.push(`POST /crm/v4/associations/${data.internalNameA}/${data.internalNameB}/batch/create`);
+    lines.push('{');
+    lines.push('  "inputs": [');
+    lines.push(`    { "from": { "id": "<${data.objectA.toUpperCase()}_ID>" }, "to": { "id": "<${data.objectB.toUpperCase()}_ID>" } }`);
+    lines.push('  ]');
+    lines.push('}');
+    lines.push('');
+    
+    // Warnings
+    const warnings: string[] = [];
+    
+    if (data.labelDiffersA) {
+      warnings.push(`UI label "${data.objectA}" differs from API object name "${data.internalNameA}"`);
+    }
+    if (data.labelDiffersB) {
+      warnings.push(`UI label "${data.objectB}" differs from API object name "${data.internalNameB}"`);
+    }
+    if (data.isAPortalScoped || data.isBPortalScoped) {
+      warnings.push('Single PUT association endpoint may return 500 in sandbox');
+    }
+    
+    if (warnings.length > 0) {
+      lines.push(chalk.bold('Warnings:'));
+      warnings.forEach((w) => {
+        lines.push(chalk.yellow(`⚠ ${w}`));
+      });
+      lines.push('');
+    }
+  } else {
+    // Association is NOT supported
+    lines.push(chalk.bold('Result:'));
+    if (!data.objectAExists || !data.objectBExists) {
+      lines.push(chalk.red('Object not found'));
+    } else {
+      lines.push(chalk.red('Association is NOT supported via API'));
+    }
+    lines.push('');
+  }
+  
+  return lines.join('\n');
+}
+
+/**
  * Common HubSpot Association API errors and their causes
  */
 export const COMMON_ERRORS = {
   '400': [
     {
       cause: 'Invalid object type name',
-      solution: 'Use the internal object name (e.g., "contacts" not "contact"). Run `hubspot-inspector schemas` to see all valid names.',
+      solution: 'Use the internal object name (e.g., "contacts" not "contact"). Run `hubspot-crm schemas` to see all valid names.',
     },
     {
       cause: 'Incorrect association type ID',
-      solution: 'Use `hubspot-inspector associations <fromObject> <toObject>` to get valid association type IDs.',
+      solution: 'Use `hubspot-crm associations <fromObject> <toObject>` to get valid association type IDs.',
     },
     {
       cause: 'Missing required association label',
@@ -165,11 +396,11 @@ export const COMMON_ERRORS = {
   '404': [
     {
       cause: 'Object type does not exist',
-      solution: 'Verify the object type exists using `hubspot-inspector schemas`.',
+      solution: 'Verify the object type exists using `hubspot-crm schemas`.',
     },
     {
       cause: 'No association definition between objects',
-      solution: 'Check available associations with `hubspot-inspector associations <fromObject> <toObject>`.',
+      solution: 'Check available associations with `hubspot-crm associations <fromObject> <toObject>`.',
     },
   ],
   '500': [
