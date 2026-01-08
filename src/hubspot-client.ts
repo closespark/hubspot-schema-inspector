@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import { SchemasResponse, HubSpotSchema, AssociationTypesResponse } from './types';
+import { SchemasResponse, HubSpotSchema, AssociationTypesResponse, ObjectExistsResult } from './types';
 
 export class HubSpotClient {
   private client: AxiosInstance;
@@ -17,6 +17,45 @@ export class HubSpotClient {
         'Content-Type': 'application/json',
       },
     });
+  }
+
+  /**
+   * Check if a standard object exists by probing the objects API (read-only)
+   * GET /crm/v3/objects/{name}?limit=1
+   * 
+   * Returns:
+   * - 200 OK → object exists and is usable
+   * - 404 → object truly does not exist  
+   * - 403 → token lacks object read scope
+   */
+  async objectExists(name: string): Promise<ObjectExistsResult> {
+    try {
+      await this.client.get(`/crm/v3/objects/${name}`, {
+        params: { limit: 1 },
+      });
+      
+      // If we reach here, the request was successful (200 OK)
+      return { exists: true, verifiedVia: 'objects' };
+    } catch (error: any) {
+      if (error.response) {
+        if (error.response.status === 404) {
+          return { exists: false, verifiedVia: 'objects' };
+        }
+        if (error.response.status === 403) {
+          return { 
+            exists: false, 
+            verifiedVia: 'objects', 
+            error: 'Insufficient permissions (403)' 
+          };
+        }
+        return { 
+          exists: false, 
+          verifiedVia: 'objects', 
+          error: `API Error (${error.response.status})` 
+        };
+      }
+      throw error;
+    }
   }
 
   /**
@@ -60,7 +99,8 @@ export class HubSpotClient {
   }
 
   /**
-   * Fetch association definitions between two object types
+   * Fetch association definitions between two object types (read-only)
+   * GET /crm/v4/associations/{fromObjectType}/{toObjectType}/types
    */
   async getAssociationTypes(
     fromObjectType: string,
@@ -68,7 +108,7 @@ export class HubSpotClient {
   ): Promise<AssociationTypesResponse> {
     try {
       const response = await this.client.get<AssociationTypesResponse>(
-        `/crm/v4/associations/${fromObjectType}/${toObjectType}/labels`
+        `/crm/v4/associations/${fromObjectType}/${toObjectType}/types`
       );
       return response.data;
     } catch (error: any) {
@@ -84,7 +124,7 @@ export class HubSpotClient {
   }
 
   /**
-   * Verify if an association path is valid
+   * Verify if an association path is valid (read-only)
    */
   async verifyAssociationPath(
     fromObjectType: string,
@@ -95,7 +135,7 @@ export class HubSpotClient {
     associationTypes?: AssociationTypesResponse;
     error?: string;
   }> {
-    const path = `/crm/v4/associations/${fromObjectType}/${toObjectType}/labels`;
+    const path = `/crm/v4/associations/${fromObjectType}/${toObjectType}/types`;
     
     try {
       const associationTypes = await this.getAssociationTypes(

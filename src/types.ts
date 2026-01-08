@@ -76,3 +76,9 @@ export interface AssociationDefinition {
 export interface AssociationTypesResponse {
   results: AssociationDefinition[];
 }
+
+export interface ObjectExistsResult {
+  exists: boolean;
+  verifiedVia: 'schemas' | 'objects';
+  error?: string;
+}

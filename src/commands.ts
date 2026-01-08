@@ -212,6 +212,13 @@ export async function inspectAssociationsCommand(
 /**
  * Verify associations between two objects - the power feature
  * Answers: "Can I safely associate these two objects via the CRM v4 API, and how?"
+ * 
+ * Read-only verification logic:
+ * 1. Try schema lookup - if found, it's a custom object
+ * 2. If not in schemas, probe objects API - if 200, it's a standard object
+ * 3. Only after both exist, check associations via GET /crm/v4/associations/{A}/{B}/types
+ * 
+ * No POST, no mutation, no assumptions.
  */
 export async function verifyAssociationsCommand(
   objectA: string,
@@ -228,25 +235,54 @@ export async function verifyAssociationsCommand(
 
   try {
     const client = new HubSpotClient(accessToken);
+    
+    // Step 1: Fetch all schemas (for custom objects discovery)
     const schemas = await client.getSchemas();
     
-    // Step 1: Confirm both objects exist
+    // Step 2: Check object A existence
+    // First try schema lookup (custom objects are only discoverable via schemas)
     const schemaA = findSchemaByNameOrLabel(schemas, objectA);
-    const schemaB = findSchemaByNameOrLabel(schemas, objectB);
+    let objectAExists: boolean;
+    let verifiedViaA: 'schemas' | 'objects';
     
-    const objectAExists = schemaA !== null;
-    const objectBExists = schemaB !== null;
+    if (schemaA !== null) {
+      // Found in schemas - it's a custom object
+      objectAExists = true;
+      verifiedViaA = 'schemas';
+    } else {
+      // Not in schemas, try probing the objects API (for standard objects)
+      const probeResultA = await client.objectExists(objectA);
+      objectAExists = probeResultA.exists;
+      verifiedViaA = 'objects';
+    }
+    
+    // Step 3: Check object B existence
+    const schemaB = findSchemaByNameOrLabel(schemas, objectB);
+    let objectBExists: boolean;
+    let verifiedViaB: 'schemas' | 'objects';
+    
+    if (schemaB !== null) {
+      // Found in schemas - it's a custom object
+      objectBExists = true;
+      verifiedViaB = 'schemas';
+    } else {
+      // Not in schemas, try probing the objects API (for standard objects)
+      const probeResultB = await client.objectExists(objectB);
+      objectBExists = probeResultB.exists;
+      verifiedViaB = 'objects';
+    }
     
     // Get the actual internal names
     const internalNameA = schemaA?.name || objectA;
     const internalNameB = schemaB?.name || objectB;
     
-    // Step 2: Check association definition
+    // Step 4: Only check association definition after BOTH objects exist
     let associationResult = null;
     let associationExists = false;
     let cardinality = '';
     
     if (objectAExists && objectBExists) {
+      // GET /crm/v4/associations/{A}/{B}/types
       associationResult = await client.verifyAssociationPath(internalNameA, internalNameB);
       associationExists = associationResult.valid && 
         (associationResult.associationTypes?.results?.length ?? 0) > 0;
@@ -272,12 +308,14 @@ export async function verifyAssociationsCommand(
           input: objectA,
           internalName: internalNameA,
           exists: objectAExists,
+          verifiedVia: verifiedViaA,
           isPortalScoped: isAPortalScoped,
         },
         objectB: {
           input: objectB,
           internalName: internalNameB,
           exists: objectBExists,
+          verifiedVia: verifiedViaB,
           isPortalScoped: isBPortalScoped,
         },
         association: {
@@ -286,9 +324,10 @@ export async function verifyAssociationsCommand(
           types: associationResult?.associationTypes?.results || [],
         },
         recommendedApiPath: associationExists 
-          ? `/crm/v4/associations/${internalNameA}/${internalNameB}/batch/create`
+          ? `POST /crm/v4/associations/${internalNameA}/${internalNameB}/batch/create`
           : null,
         valid: objectAExists && objectBExists && associationExists,
+        writeOperationsPerformed: false,
       };
       console.log(JSON.stringify(output));
       
@@ -309,6 +348,8 @@ export async function verifyAssociationsCommand(
       internalNameB,
       objectAExists,
       objectBExists,
+      verifiedViaA,
+      verifiedViaB,
       associationExists,
       cardinality,
       isAPortalScoped,
